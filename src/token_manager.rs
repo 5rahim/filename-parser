@@ -4,7 +4,7 @@ use crate::keyword::{Keyword, KeywordCategory, KeywordKind, KeywordPriority};
 use crate::keyword_manager::KeywordManager;
 use crate::metadata::MetadataKind;
 use crate::token::{Token, TokenCategory, TokenKind};
-use crate::token_helper::{extract_season_and_episode, is_digits, is_number_like, is_number_or_like};
+use crate::token_helper::{extract_season_and_episode, is_digits, is_number_like, is_number_or_like, is_ordinal_number};
 use crate::tokenizer;
 use crate::utils::replace_case_insensitive;
 
@@ -43,91 +43,134 @@ impl TokenManager {
     ///
     pub fn identify_keyword(&self, token: &Token) -> Option<Vec<Token>> {
         // Find the keyword by value
-        let keyword_ret = self.keyword_manager.find(token.value.as_str());
+        let keyword_ret = self.keyword_manager.find_many(token.value.as_str());
+        let mut found: Option<Vec<Token>> = None;
         // If the keyword exist, we check its category
-        if let Some(keyword) = keyword_ret {
-            return match keyword.kind {
-
-                // If the keyword is standalone, we don't need to check adjacent tokens,
-                KeywordKind::Standalone => Some(vec![
-                    Token::new_with_kind(token.value.clone(), TokenCategory::Keyword(keyword), TokenKind::String)
-                ]),
-
-                // If the keyword is of combined type and the next token should be NumberLike
-                KeywordKind::Combined { next_token_kind: TokenKind::NumberLike } => {
-
-                    // Directly try parsing episode, season
-                    if let Some(res) = extract_season_and_episode(token.value.as_str()) {
-                        return Some(vec![
-                            Token::new_with_kind(keyword.value.to_string(), TokenCategory::Keyword(keyword), TokenKind::String),
-                            Token::new_with_kind(res.0.as_str(), TokenCategory::Known(MetadataKind::Season), TokenKind::Number),
-                            Token::new_with_kind(
-                                res.1.as_str(),
-                                TokenCategory::Keyword(
-                                    Keyword::new(res.1.to_string(), KeywordCategory::EpisodePrefix, KeywordKind::Combined { next_token_kind: TokenKind::NumberLike }, KeywordPriority::Normal)
-                                ),
-                                TokenKind::SingleCharacter),
-                            Token::new_with_kind(res.2.as_str(), TokenCategory::Known(MetadataKind::EpisodeNumber), if is_digits(res.2.as_str()) { TokenKind::Number } else { TokenKind::NumberLike }),
-                        ]);
-                    }
-
-                    // Split and check adjacent token e.g. S01 -> S 01
-                    let suffix = replace_case_insensitive(token.value.as_str(), keyword.value.as_str(), "");
-                    if !suffix.is_empty() && is_number_like(suffix.as_str()) {
-                        return Some(vec![
-                            Token::new_with_kind(keyword.value.to_string(), TokenCategory::Keyword(keyword), TokenKind::String),
-                            Token::new_with_kind(suffix.as_str(), TokenCategory::Unknown, if is_digits(suffix.as_str()) { TokenKind::Number } else { TokenKind::NumberLike }),
-                        ]);
-                    }
-
-
-                    return None;
-                }
-
-                // If the keyword is of combined or separated type and the next token should be NumberLike
-                KeywordKind::CombinedOrSeparated { next_token_kind: TokenKind::NumberLike } => {
-
-                    // First we check for combined e.g. OP1
-                    let suffix = replace_case_insensitive(token.value.as_str(), keyword.value.as_str(), "");
-                    if !suffix.is_empty() && is_number_or_like(suffix.as_str()) {
-                        return Some(
-                            vec![
-                                Token::new_with_kind(keyword.value.clone(), TokenCategory::Keyword(keyword), TokenKind::String),
-                                Token::new_with_kind(suffix.as_str(), TokenCategory::Unknown, if is_digits(suffix.as_str()) { TokenKind::Number } else { TokenKind::NumberLike }),
-                            ]
-                        );
-                    }
-
-                    // Then we check for separated
-
-                    // Check if the following token is NumberLike
-                    let valid_next_token = if let Some(token_idx) = self.get_index_of_token(token, true) {
-                        if let Some(next_token) = self.get_token_after(token_idx, true) {
-                            match next_token.kind {
-                                TokenKind::Number => true,
-                                TokenKind::NumberLike => true,
-                                _ => false,
+        if let Some(keywords) = keyword_ret {
+            let iter = keywords.iter();
+            for keyword in iter {
+                // This whole block of code is to basically PREFER keywords whose kind is a "combination"
+                // over "standalone" keywords.
+                if let Some(ret) = self.identify_single_keyword(token, keyword) {
+                    match ret[0].clone().category {
+                        TokenCategory::Keyword(kw) => {
+                            match kw.kind {
+                                KeywordKind::Standalone => {
+                                    if found == None {
+                                        found = Some(ret)
+                                    }
+                                }
+                                _ => {
+                                    found = Some(ret)
+                                }
                             }
-                        } else {
-                            false
                         }
-                    } else {
-                        false
+                        _ => {}
                     };
-
-                    if valid_next_token {
-                        return Some(vec![
-                            Token::new_with_kind(keyword.value.clone(), TokenCategory::Keyword(keyword), TokenKind::String),
-                        ]);
-                    }
-
-                    return None;
                 }
-                KeywordKind::Separated { .. } => None,
-                _ => None
-            };
+            }
         }
-        return None;
+        return found;
+    }
+    // pub fn identify_keyword(&self, token: &Token) -> Option<Vec<Token>> {
+    //     // Find the keyword by value
+    //     let keyword_ret = self.keyword_manager.find(token.value.as_str());
+    //     // If the keyword exist, we check its category
+    //     if let Some(keyword) = keyword_ret {
+    //         return self.identify_single_keyword(token, &keyword);
+    //     }
+    //     return None;
+    // }
+
+    /// De-duplicating keyword matches
+    /// Flattening tokens whose TokenCategory is TokenCategory::TokenParts
+    pub fn normalize() {}
+
+
+    fn identify_single_keyword(&self, token: &Token, keyword: &Keyword) -> Option<Vec<Token>> {
+        return match keyword.kind {
+
+            // If the keyword is of combined type and the next token should be NumberLike
+            KeywordKind::Combined { next_token_kind: TokenKind::NumberLike } => {
+
+                // Directly try parsing episode, season
+                if let Some(res) = extract_season_and_episode(token.value.as_str()) {
+                    return Some(vec![
+                        Token::new_with_kind(keyword.value.to_string(), TokenCategory::Keyword(keyword.clone()), TokenKind::String),
+                        Token::new_with_kind(res.0.as_str(), TokenCategory::Known(MetadataKind::Season), TokenKind::Number),
+                        Token::new_with_kind(
+                            res.1.as_str(),
+                            TokenCategory::Keyword(
+                                Keyword::new(res.1.to_string(), KeywordCategory::EpisodePrefix, KeywordKind::Combined { next_token_kind: TokenKind::NumberLike }, KeywordPriority::Normal)
+                            ),
+                            TokenKind::SingleCharacter),
+                        Token::new_with_kind(res.2.as_str(), TokenCategory::Known(MetadataKind::EpisodeNumber), if is_digits(res.2.as_str()) { TokenKind::Number } else { TokenKind::NumberLike }),
+                    ]);
+                }
+
+                // Split and check adjacent token e.g. S01 -> S 01
+                let suffix = replace_case_insensitive(token.value.as_str(), keyword.value.as_str(), "");
+                if !suffix.is_empty() && is_number_or_like(suffix.as_str()) {
+                    return Some(vec![
+                        Token::new_with_kind(keyword.value.to_string(), TokenCategory::Keyword(keyword.clone()), TokenKind::String),
+                        Token::new_with_kind(suffix.as_str(), TokenCategory::Unknown, if is_digits(suffix.as_str()) { TokenKind::Number } else { TokenKind::NumberLike }),
+                    ]);
+                }
+
+
+                return None;
+            }
+
+            // If the keyword is of combined or separated type and the next token should be NumberLike
+            KeywordKind::CombinedOrSeparated { next_token_kind: TokenKind::NumberLike } => {
+
+                // First we check for combined e.g. OP1
+                let suffix = replace_case_insensitive(token.value.as_str(), keyword.value.as_str(), "");
+                if !suffix.is_empty() && is_number_or_like(suffix.as_str()) {
+                    return Some(
+                        vec![
+                            Token::new_with_kind(keyword.value.clone(), TokenCategory::Keyword(keyword.clone()), TokenKind::String),
+                            Token::new_with_kind(suffix.as_str(), TokenCategory::Unknown, if is_digits(suffix.as_str()) { TokenKind::Number } else { TokenKind::NumberLike }),
+                        ]
+                    );
+                }
+
+                // Then we check for separated
+
+                if self.next_token_is_number_like(token) {
+                    return Some(vec![
+                        Token::new_with_kind(keyword.value.clone(), TokenCategory::Keyword(keyword.clone()), TokenKind::String),
+                    ]);
+                }
+
+                return None;
+            }
+            KeywordKind::Separated { next_token_kind: TokenKind::NumberLike } => {
+                if self.next_token_is_number_like(token) {
+                    return Some(vec![
+                        Token::new_with_kind(keyword.value.clone(), TokenCategory::Keyword(keyword.clone()), TokenKind::String),
+                    ]);
+                }
+
+                return None;
+            }
+            KeywordKind::OrdinalSuffix => {
+                println!("{:?}", keyword);
+
+                if self.previous_token_is_ordinal_number(token) {
+                    return Some(vec![
+                        Token::new_with_kind(keyword.value.clone(), TokenCategory::Keyword(keyword.clone()), TokenKind::String),
+                    ]);
+                }
+
+                return None;
+            }
+            // If the keyword is standalone, we don't need to check adjacent tokens,
+            KeywordKind::Standalone => Some(vec![
+                Token::new_with_kind(token.value.clone(), TokenCategory::Keyword(keyword.clone()), TokenKind::String)
+            ]),
+            _ => None
+        };
     }
 
     pub fn get_index_of_token(&self, token: &Token, skip_delimiter: bool) -> Option<usize> {
@@ -144,7 +187,8 @@ impl TokenManager {
 
     pub fn get_known_token_before(&self, index: usize, category: TokenCategory, skip_delimiter: bool) -> Option<Token> {
         let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
-        let mut iter = m.rev().skip(self.tokens.len() - index);
+        let count = m.clone().count();
+        let mut iter = m.rev().skip(count - index);
         iter.find(|t| t.category == category).cloned()
     }
 
@@ -156,7 +200,8 @@ impl TokenManager {
 
     pub fn get_token_before(&self, index: usize, skip_delimiter: bool) -> Option<Token> {
         let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
-        let mut iter = m.rev().skip(self.tokens.len() - index);
+        let count = m.clone().count();
+        let mut iter = m.rev().skip(count - index);
         iter.next().cloned()
     }
 
@@ -198,6 +243,50 @@ impl TokenManager {
     }
 
     //------------ Private -------------
+
+    ///
+    /// Checks if the following token (no delimiter) is of TokenKind::Number or TokenKind::NumberLike
+    ///
+    fn next_token_is_number_like(&self, token: &Token) -> bool {
+        // Check if the following token is NumberLike
+        return if let Some(token_idx) = self.get_index_of_token(&token, true) {
+            if let Some(next_token) = self.get_token_after(token_idx, true) {
+                match next_token.kind {
+                    TokenKind::Number => true,
+                    TokenKind::NumberLike => true,
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+    }
+
+    ///
+    /// Checks if the preceding token (no delimiter) is of TokenKind::Number or TokenKind::NumberLike
+    ///
+    fn previous_token_is_ordinal_number(&self, token: &Token) -> bool {
+        // Check if the following token is NumberLike
+        return if let Some(token_idx) = self.get_index_of_token(&token, true) {
+            if let Some(prev_token) = self.get_token_before(token_idx, true) {
+                match prev_token.kind {
+                    TokenKind::NumberLike => {
+                        if is_ordinal_number(prev_token.value.as_str()) {
+                            return true;
+                        }
+                        false
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+    }
 
     /// Identify the kinds of each token.
     /// This is done when the TokenManager is instantiated.
@@ -252,8 +341,10 @@ fn test_token_kind_number_like() {
 #[test]
 fn test_token_utils() {
     // delimiter skipped
-    test_get_next_token_from("Season 1", 0, "1");
-    test_get_next_token_from("One Two Three Four", 1, "Three");
+    test_get_token_after("Title - 4th Season", 1, "4th");
+    test_get_token_before("Title - 4th Season", 3, "4th");
+    test_get_token_after("Season 1", 0, "1");
+    test_get_token_after("One Two Three Four", 1, "Three");
 }
 
 #[test]
@@ -271,9 +362,14 @@ fn test_identify_keyword() {
 }
 
 #[test]
+fn test_identify_keyword_01() {
+    test_identify_keyword_ordinal_suffix("4th season");
+}
+
+#[test]
 #[should_panic]
 fn test_identify_keyword_panic_00() {
-    test_identify_keyword_combined("En", TokenKind::Number); // Not E01
+    test_identify_keyword_combined("Sword", TokenKind::String); // should not detect "S" as season prefix
 }
 
 #[test]
@@ -353,11 +449,42 @@ fn test_identify_keyword_combined_or_separated(input: &str) {
     }
 }
 
-fn test_get_next_token_from(input: &str, index: usize, expected_value: &str) {
+
+fn test_identify_keyword_ordinal_suffix(input: &str) {
+    let tokens = tokenizer::tokenize(input);
+    let token_manager = TokenManager::new(tokens.clone());
+
+    println!("----------------------------------------------------");
+    println!("Input: {}", input);
+
+    let ret = token_manager.identify_keyword(&tokens[2]).unwrap();
+    println!("Returned tokens: {:#?}", ret);
+
+    match ret[0].clone().category {
+        TokenCategory::Keyword(keyword) => {
+            match keyword.kind {
+                KeywordKind::OrdinalSuffix { .. } => assert!(true),
+                _ => panic!("Expected ordinal suffix keyword")
+            }
+        }
+        _ => panic!("Expected Keyword, found {:?}", ret[0].category)
+    }
+}
+
+fn test_get_token_after(input: &str, index: usize, expected_value: &str) {
     let tokens = tokenizer::tokenize(input);
     let token_manager = TokenManager::new(tokens.clone());
 
     let ret = token_manager.get_token_after(index, true);
+    println!("{:#?}", ret.clone().unwrap());
+    assert_eq!(expected_value, ret.unwrap().value);
+}
+
+fn test_get_token_before(input: &str, index: usize, expected_value: &str) {
+    let tokens = tokenizer::tokenize(input);
+    let token_manager = TokenManager::new(tokens.clone());
+
+    let ret = token_manager.get_token_before(index, true);
     println!("{:#?}", ret.clone().unwrap());
     assert_eq!(expected_value, ret.unwrap().value);
 }

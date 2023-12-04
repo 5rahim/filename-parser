@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::keyword::{Keyword, KeywordCategory, KeywordKind, KeywordPriority};
-use crate::token::TokenKind;
+use crate::token::{TokenKind};
 
 #[derive(Debug, Clone)]
 pub struct KeywordManager {
@@ -24,6 +24,11 @@ impl KeywordManager {
             .add_group(
                 KeywordCategory::SeasonPrefix,
                 KeywordKind::CombinedOrSeparated { next_token_kind: TokenKind::NumberLike },
+                KeywordPriority::Normal,
+                vec!["SEASON", "SAISON", "SEASONS", "SAISONS"])
+            .add_group(
+                KeywordCategory::SeasonPrefix,
+                KeywordKind::OrdinalSuffix,
                 KeywordPriority::Normal,
                 vec!["SEASON", "SAISON", "SEASONS", "SAISONS"])
 
@@ -267,6 +272,7 @@ impl KeywordManager {
     pub fn find_standalone(&self, token_value: &str) -> Option<Keyword> {
         self.keywords
             .iter()
+            .filter(|(_, val)| val.is_standalone())
             .find(|(key, _)| key.to_uppercase() == token_value.to_uppercase())
             .map(|(_, value)| value.clone())
     }
@@ -294,6 +300,18 @@ impl KeywordManager {
         }
     }
 
+    /// Find a keyword by value.
+    pub fn find_many(&self, token_value: &str) -> Option<Vec<Keyword>> {
+        // Get keywords that are Combined or CombinedOrSeparated
+        let filtered: Vec<Keyword> = self.keywords
+            .iter().cloned()
+            .filter(|(key, _val)| token_value.to_uppercase().starts_with(key))
+            .map(|(_, val)| val)
+            .collect();
+
+        return Some(filtered);
+    }
+
 
     //-----------
 
@@ -311,7 +329,7 @@ impl KeywordManager {
         return self.keywords
             .clone()
             .into_iter()
-            .filter(|(_key, val)| { val.is_combined() || val.is_combined_or_separated() })
+            .filter(|(_key, val)| { val.is_combined() || val.is_combined_or_separated() || val.is_ordinal_suffix() })
             .collect();
     }
 }

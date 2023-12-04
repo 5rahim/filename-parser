@@ -35,6 +35,11 @@ pub fn is_number_like(input: &str) -> bool {
         return false;
     }
 
+    // Check for ordinal
+    if is_ordinal_number(input) {
+        return true;
+    }
+
     // Check if the last character is a digit or "'"
     if let Some(last_char) = chars.next_back() {
         if last_char == '\'' {
@@ -52,6 +57,12 @@ pub fn is_number_like(input: &str) -> bool {
     let non_digits = chars.filter(|c| !c.is_digit(10)).count();
 
     non_digits == 1
+}
+
+pub fn is_ordinal_number(input: &str) -> bool {
+    return input.to_lowercase().ends_with("th") ||
+        input.to_lowercase().ends_with("st") ||
+        input.to_lowercase().ends_with("rd")
 }
 
 pub fn is_number_or_like(input: &str) -> bool {
