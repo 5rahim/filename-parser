@@ -71,12 +71,33 @@ impl Token {
         self.category == category
     }
 
-    pub fn get_bracket_type(self) -> Option<BracketType> {
+    pub fn get_bracket_type(&self) -> Option<BracketType> {
         match self.category {
             TokenCategory::Bracket(n) => {
                 Some(n)
             }
             _ => None
         }
+    }
+
+    pub fn get_metadata_kind(&self) -> Option<MetadataKind> {
+        match self.category {
+            TokenCategory::Known(kind) => Some(kind),
+            _ => None
+        }
+    }
+
+    pub fn is_known(&self) -> bool {
+        match self.category {
+            TokenCategory::Known(_) => true,
+            _ => false
+        }
+    }
+
+    pub fn has_metadata_kind(&self, kind: MetadataKind) -> bool {
+        if let Some(s_kind) = self.get_metadata_kind() {
+            return s_kind == kind;
+        }
+        false
     }
 }

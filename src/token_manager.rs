@@ -4,9 +4,10 @@ use crate::keyword::{Keyword, KeywordCategory, KeywordKind, KeywordPriority};
 use crate::keyword_manager::KeywordManager;
 use crate::metadata::MetadataKind;
 use crate::token::{Token, TokenCategory, TokenKind};
-use crate::token_helper::{extract_season_and_episode, is_digits, is_number_like, is_number_or_like, is_ordinal_number};
+use crate::token_helper::{extract_season_and_episode, is_digits, is_number_like, is_number_or_like, is_ordinal_number, is_video_resolution};
 use crate::tokenizer;
 use crate::utils::replace_case_insensitive;
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct TokenManager {
@@ -29,32 +30,52 @@ impl TokenManager {
         tm
     }
 
-    pub fn get_tokens(&self) -> Vec<Token> {
+    pub fn get_tokens(&mut self) -> Vec<Token> {
         return self.tokens.clone();
     }
 
+    pub fn update_token_category(&mut self, id: Uuid, token_category: TokenCategory) {
+        if let Some(token) = self.tokens.iter_mut().find(|t| t.uuid == id) {
+            token.category = token_category
+        }
+    }
+
     ///
-    /// Identifies a keyword using the KeywordManager and validates it depending
-    /// on the keyword category and adjacent tokens.
+    /// Identifies whether the token is a keyword by comparing it to all keywords.
+    /// It will prefer "combination" keywords over "standalone" ones.
     ///
-    /// If the returned vector has a single element, the token should be of TokenCategory::Keyword(keyword).
-    ///
-    /// If the returned vector has more than one element, the should be of TokenCategory::TokenParts(Vec<Token>).
-    ///
-    pub fn identify_keyword(&self, token: &Token) -> Option<Vec<Token>> {
-        // Find the keyword by value
+    pub fn identify_keyword(&mut self, token: &Token) -> Option<Vec<Token>> {
+
+        if token.is_known() {
+            return None;
+        }
+
+        // Check if the token is a video resolution
+        if is_video_resolution(token.value.as_str()) {
+            return Some(vec![
+                Token {
+                    category: TokenCategory::Keyword(
+                        Keyword::new(token.value.to_string(), KeywordCategory::VideoTerm, KeywordKind::Standalone, KeywordPriority::Normal)
+                    ),
+                    ..token.clone()
+                }
+            ]);
+        }
+
+        // Find possible keywords by value
         let keyword_ret = self.keyword_manager.find_many(token.value.as_str());
         let mut found: Option<Vec<Token>> = None;
-        // If the keyword exist, we check its category
+        // If we were able to find some keywords, we will validate them based on their KeywordKind
         if let Some(keywords) = keyword_ret {
             let iter = keywords.iter();
             for keyword in iter {
-                // This whole block of code is to basically PREFER keywords whose kind is a "combination"
-                // over "standalone" keywords.
-                if let Some(ret) = self.identify_single_keyword(token, keyword) {
+                // Validate the keyword
+                if let Some(ret) = self.validate_keyword(token, keyword) {
                     match ret[0].clone().category {
                         TokenCategory::Keyword(kw) => {
                             match kw.kind {
+                                // If the validated keyword is "standalone", make sure we didn't
+                                // already validate another kind.
                                 KeywordKind::Standalone => {
                                     if found == None {
                                         found = Some(ret)
@@ -72,29 +93,37 @@ impl TokenManager {
         }
         return found;
     }
-    // pub fn identify_keyword(&self, token: &Token) -> Option<Vec<Token>> {
+    // pub fn identify_keyword(&mut self, token: &Token) -> Option<Vec<Token>> {
     //     // Find the keyword by value
     //     let keyword_ret = self.keyword_manager.find(token.value.as_str());
     //     // If the keyword exist, we check its category
     //     if let Some(keyword) = keyword_ret {
-    //         return self.identify_single_keyword(token, &keyword);
+    //         return self.validate_keyword(token, &keyword);
     //     }
     //     return None;
     // }
 
     /// De-duplicating keyword matches
     /// Flattening tokens whose TokenCategory is TokenCategory::TokenParts
-    pub fn normalize() {}
+    pub fn normalize(&mut self, _token: &Token, _validated_tokens: Vec<Token>) {}
 
 
-    fn identify_single_keyword(&self, token: &Token, keyword: &Keyword) -> Option<Vec<Token>> {
+    ///
+    /// If the returned vector has a single Token, the input token should be of TokenCategory::Keyword(keyword).
+    ///
+    /// If the returned vector has more than one Token, the input token should be of TokenCategory::TokenParts(Vec<Token>).
+    ///
+    fn validate_keyword(&mut self, token: &Token, keyword: &Keyword) -> Option<Vec<Token>> {
         return match keyword.kind {
 
             // If the keyword is of combined type and the next token should be NumberLike
+            // e.g: "S" or "E"
             KeywordKind::Combined { next_token_kind: TokenKind::NumberLike } => {
 
                 // Directly try parsing episode, season
                 if let Some(res) = extract_season_and_episode(token.value.as_str()) {
+                    // Here is the only place where we will immediately employ TokenCategory::Known
+                    // since we are sure
                     return Some(vec![
                         Token::new_with_kind(keyword.value.to_string(), TokenCategory::Keyword(keyword.clone()), TokenKind::String),
                         Token::new_with_kind(res.0.as_str(), TokenCategory::Known(MetadataKind::Season), TokenKind::Number),
@@ -173,39 +202,50 @@ impl TokenManager {
         };
     }
 
-    pub fn get_index_of_token(&self, token: &Token, skip_delimiter: bool) -> Option<usize> {
+    //--------------------
+
+    pub fn get_token_by_metadata_kind(&mut self, kind: MetadataKind) -> Option<Token> {
+        let mut m = self.tokens.iter();
+        m.find(|t| t.has_metadata_kind(kind)).cloned()
+    }
+
+    pub fn has_token_with_metadata_kind(&mut self, kind: MetadataKind) -> bool {
+        self.get_token_by_metadata_kind(kind).is_some()
+    }
+
+    pub fn get_index_of_token(&mut self, token: &Token, skip_delimiter: bool) -> Option<usize> {
         let mut m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
         m.position(|t| t.uuid == token.uuid)
     }
 
-    pub fn get_known_token_after(&self, index: usize, category: TokenCategory, skip_delimiter: bool) -> Option<Token> {
+    pub fn get_known_token_after(&mut self, index: usize, category: TokenCategory, skip_delimiter: bool) -> Option<Token> {
         let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
         let mut iter = m.skip(index + 1);
 
         iter.find(|t| t.category == category).cloned()
     }
 
-    pub fn get_known_token_before(&self, index: usize, category: TokenCategory, skip_delimiter: bool) -> Option<Token> {
+    pub fn get_known_token_before(&mut self, index: usize, category: TokenCategory, skip_delimiter: bool) -> Option<Token> {
         let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
         let count = m.clone().count();
         let mut iter = m.rev().skip(count - index);
         iter.find(|t| t.category == category).cloned()
     }
 
-    pub fn get_token_after(&self, index: usize, skip_delimiter: bool) -> Option<Token> {
+    pub fn get_token_after(&mut self, index: usize, skip_delimiter: bool) -> Option<Token> {
         let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
         let mut iter = m.skip(index + 1);
         iter.next().cloned()
     }
 
-    pub fn get_token_before(&self, index: usize, skip_delimiter: bool) -> Option<Token> {
+    pub fn get_token_before(&mut self, index: usize, skip_delimiter: bool) -> Option<Token> {
         let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
         let count = m.clone().count();
         let mut iter = m.rev().skip(count - index);
         iter.next().cloned()
     }
 
-    pub fn get_tokens_from_until(&self, index: usize, category: TokenCategory, skip_delimiter: bool) -> Option<Vec<Token>> {
+    pub fn get_tokens_until_category(&mut self, index: usize, category: TokenCategory, skip_delimiter: bool) -> Option<Vec<Token>> {
         let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
         let iter = m.skip(index + 1);
         let tokens = iter
@@ -220,13 +260,14 @@ impl TokenManager {
         }
     }
 
-    pub fn get_next_token_from(&self, index: usize, skip_delimiter: bool) -> Option<Token> {
+    pub fn get_next_token_from(&mut self, index: usize, skip_delimiter: bool) -> Option<Token> {
         let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
         let mut iter = m.skip(index + 1);
         iter.next().cloned()
     }
 
-    pub fn get_matching_tokens_after(&self, index: usize, sequence: Vec<TokenCategory>, skip_delimiter: bool) -> Option<Vec<Token>> {
+    // TODO redo
+    pub fn get_matching_tokens_after(&mut self, index: usize, sequence: Vec<TokenCategory>, skip_delimiter: bool) -> Option<Vec<Token>> {
         let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
         let iter = m.skip(index + 1);
 
@@ -247,7 +288,7 @@ impl TokenManager {
     ///
     /// Checks if the following token (no delimiter) is of TokenKind::Number or TokenKind::NumberLike
     ///
-    fn next_token_is_number_like(&self, token: &Token) -> bool {
+    fn next_token_is_number_like(&mut self, token: &Token) -> bool {
         // Check if the following token is NumberLike
         return if let Some(token_idx) = self.get_index_of_token(&token, true) {
             if let Some(next_token) = self.get_token_after(token_idx, true) {
@@ -267,7 +308,7 @@ impl TokenManager {
     ///
     /// Checks if the preceding token (no delimiter) is of TokenKind::Number or TokenKind::NumberLike
     ///
-    fn previous_token_is_ordinal_number(&self, token: &Token) -> bool {
+    fn previous_token_is_ordinal_number(&mut self, token: &Token) -> bool {
         // Check if the following token is NumberLike
         return if let Some(token_idx) = self.get_index_of_token(&token, true) {
             if let Some(prev_token) = self.get_token_before(token_idx, true) {
@@ -327,7 +368,7 @@ fn test_token_kind_number_like() {
 
     let tokens = tokenizer::tokenize(&input);
 
-    let token_manager = TokenManager::new(tokens.clone());
+    let mut token_manager = TokenManager::new(tokens.clone());
 
     println!("{:#?}", token_manager.get_tokens());
 
@@ -386,7 +427,7 @@ fn test_identify_keyword_panic_02() {
 
 fn test_identify_keyword_deeply_combined(input: &str, number_kinds: Vec<TokenKind>) {
     let tokens = tokenizer::tokenize(input);
-    let token_manager = TokenManager::new(tokens.clone());
+    let mut token_manager = TokenManager::new(tokens.clone());
 
     let split_tokens = token_manager.identify_keyword(&tokens[0]).unwrap();
 
@@ -409,7 +450,7 @@ fn test_identify_keyword_deeply_combined(input: &str, number_kinds: Vec<TokenKin
 
 fn test_identify_keyword_combined(input: &str, attached_token_expected_kind: TokenKind) {
     let tokens = tokenizer::tokenize(input);
-    let token_manager = TokenManager::new(tokens.clone());
+    let mut token_manager = TokenManager::new(tokens.clone());
 
     for token in token_manager.get_tokens().iter().filter(|t| t.value != " ") {
         let split_tokens = token_manager.identify_keyword(token).unwrap();
@@ -428,7 +469,7 @@ fn test_identify_keyword_combined(input: &str, attached_token_expected_kind: Tok
 
 fn test_identify_keyword_combined_or_separated(input: &str) {
     let tokens = tokenizer::tokenize(input);
-    let token_manager = TokenManager::new(tokens.clone());
+    let mut token_manager = TokenManager::new(tokens.clone());
 
     println!("----------------------------------------------------");
     println!("Input: {}", input);
@@ -452,7 +493,7 @@ fn test_identify_keyword_combined_or_separated(input: &str) {
 
 fn test_identify_keyword_ordinal_suffix(input: &str) {
     let tokens = tokenizer::tokenize(input);
-    let token_manager = TokenManager::new(tokens.clone());
+    let mut token_manager = TokenManager::new(tokens.clone());
 
     println!("----------------------------------------------------");
     println!("Input: {}", input);
@@ -473,7 +514,7 @@ fn test_identify_keyword_ordinal_suffix(input: &str) {
 
 fn test_get_token_after(input: &str, index: usize, expected_value: &str) {
     let tokens = tokenizer::tokenize(input);
-    let token_manager = TokenManager::new(tokens.clone());
+    let mut token_manager = TokenManager::new(tokens.clone());
 
     let ret = token_manager.get_token_after(index, true);
     println!("{:#?}", ret.clone().unwrap());
@@ -482,7 +523,7 @@ fn test_get_token_after(input: &str, index: usize, expected_value: &str) {
 
 fn test_get_token_before(input: &str, index: usize, expected_value: &str) {
     let tokens = tokenizer::tokenize(input);
-    let token_manager = TokenManager::new(tokens.clone());
+    let mut token_manager = TokenManager::new(tokens.clone());
 
     let ret = token_manager.get_token_before(index, true);
     println!("{:#?}", ret.clone().unwrap());

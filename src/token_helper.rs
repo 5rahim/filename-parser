@@ -69,6 +69,46 @@ pub fn is_number_or_like(input: &str) -> bool {
     return is_number_like(input) || is_digits(input)
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Debug, PartialEq)]
+enum VideoResolution {
+    Standard(u32, u32),
+    HD(u32),
+    _4K,
+}
+
+fn parse_resolution(input: &str) -> Option<VideoResolution> {
+    let standard_regex = Regex::new(r"^\s*(\d+)\s*x\s*(\d+)\s*$").unwrap();
+    let hd_regex = Regex::new(r"^\s*(\d+)\s*[pP]\s*$").unwrap();
+    let _4k_regex = Regex::new(r"^\s*4K\s*$").unwrap();
+
+    if let Some(captures) = standard_regex.captures(input) {
+        let width = captures[1].parse().ok()?;
+        let height = captures[2].parse().ok()?;
+        Some(VideoResolution::Standard(width, height))
+    } else if let Some(captures) = hd_regex.captures(input) {
+        let height = captures[1].parse().ok()?;
+        Some(VideoResolution::HD(height))
+    } else if _4k_regex.is_match(input) {
+        Some(VideoResolution::_4K)
+    } else {
+        None
+    }
+}
+
+pub fn is_crc32(s: &str) -> bool {
+    s.len() == 8 && is_hexadecimal_string(s)
+}
+
+pub fn is_hexadecimal_string(s: &str) -> bool {
+    u32::from_str_radix(s, 16).is_ok()
+}
+
+pub fn is_video_resolution(input: &str) -> bool {
+    parse_resolution(input).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

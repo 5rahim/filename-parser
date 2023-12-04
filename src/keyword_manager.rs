@@ -235,7 +235,7 @@ impl KeywordManager {
                 KeywordKind::CombinedOrSeparated { next_token_kind: TokenKind::NumberLike },
                 KeywordPriority::Normal,
                 vec![
-                    "PART", "PT.",
+                    "PART", "PT.", "PARTS", "COUR"
                 ],
             );
 
