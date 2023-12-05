@@ -69,6 +69,13 @@ pub fn is_number_or_like(input: &str) -> bool {
     return is_number_like(input) || is_digits(input)
 }
 
+pub fn number_is_zero_padded(input: &str) -> bool {
+    if let Ok(_) = input.parse::<u32>() {
+        return input.starts_with('0')
+    }
+    false
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, PartialEq)]

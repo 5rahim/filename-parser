@@ -179,7 +179,6 @@ impl TokenManager {
                 return None;
             }
             KeywordKind::OrdinalSuffix => {
-                println!("{:?}", keyword);
 
                 if self.previous_token_is_ordinal_number(token) {
                     return Some(vec![
@@ -213,24 +212,39 @@ impl TokenManager {
         m.position(|t| t.uuid == token.uuid)
     }
 
-    pub fn get_known_token_after(&mut self, index: usize, category: TokenCategory, skip_delimiter: bool) -> Option<Token> {
-        let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
-        let mut iter = m.skip(index + 1);
-
-        iter.find(|t| t.category == category).cloned()
-    }
-
-    pub fn get_known_token_before(&mut self, index: usize, category: TokenCategory, skip_delimiter: bool) -> Option<Token> {
-        let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
-        let count = m.clone().count();
-        let mut iter = m.rev().skip(count - index);
-        iter.find(|t| t.category == category).cloned()
-    }
+    // pub fn get_known_token_after(&mut self, index: usize, category: TokenCategory, skip_delimiter: bool) -> Option<Token> {
+    //     let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
+    //     let mut iter = m.skip(index + 1);
+    //
+    //     iter.find(|t| t.category == category).cloned()
+    // }
+    //
+    // pub fn get_known_token_before(&mut self, index: usize, category: TokenCategory, skip_delimiter: bool) -> Option<Token> {
+    //     let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
+    //     let count = m.clone().count();
+    //     let mut iter = m.rev().skip(count - index);
+    //     iter.find(|t| t.category == category).cloned()
+    // }
 
     pub fn get_token_after(&mut self, index: usize, skip_delimiter: bool) -> Option<Token> {
         let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
         let mut iter = m.skip(index + 1);
         iter.next().cloned()
+    }
+
+    pub fn get_token_by_kind_after(&mut self, index: usize, token_kind: TokenKind, skip_delimiter: bool) -> Option<Token> {
+        let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
+        let mut iter = m.skip(index + 1);
+        match iter.next() {
+            None => None,
+            Some(token) => {
+                return if token.kind == token_kind {
+                    Some(token.clone())
+                } else {
+                    None
+                }
+            }
+        }
     }
 
     pub fn get_token_before(&mut self, index: usize, skip_delimiter: bool) -> Option<Token> {
@@ -262,17 +276,19 @@ impl TokenManager {
     }
 
     // TODO redo
-    pub fn get_matching_tokens_after(&mut self, index: usize, sequence: Vec<TokenCategory>, skip_delimiter: bool) -> Option<Vec<Token>> {
+    pub fn get_matching_tokens_after(&self, index: usize, sequence: Vec<TokenCategory>, skip_delimiter: bool) -> Option<Vec<Token>> {
         let m = self.tokens.iter().filter(|t| if skip_delimiter { t.category != TokenCategory::Delimiter } else { true });
-        let iter = m.skip(index + 1);
 
-        let matching_tokens = iter
-            .take_while(|t| sequence.contains(&t.category))
-            .cloned()
-            .collect::<Vec<Token>>();
+        let mut iter = m.skip(index + 1);
+        let mut matching_tokens = Vec::new();
 
-        if matching_tokens.is_empty() || matching_tokens.len() != sequence.len() {
-            return None;
+        for category in &sequence {
+            match iter.next() {
+                Some(token) if token.category == *category => {
+                    matching_tokens.push(token.clone());
+                }
+                _ => return None, // Sequence does not match
+            }
         }
 
         Some(matching_tokens)
@@ -400,6 +416,14 @@ fn test_identify_keyword() {
 #[test]
 fn test_identify_keyword_01() {
     test_identify_keyword_ordinal_suffix("4th season");
+}
+
+
+#[test]
+fn test_sequence() {
+    let tokens = tokenizer::tokenize("05 - 43");
+    let token_manager = TokenManager::new(tokens.clone());
+    println!("{:#?}", token_manager.get_matching_tokens_after(0, vec![TokenCategory::Separator, TokenCategory::Unknown], true))
 }
 
 #[test]

@@ -124,6 +124,14 @@ impl TokenCategory {
             _ => false
         }
     }
+    pub fn get_keyword(&self) -> Option<Keyword> {
+        match self {
+            TokenCategory::Keyword(keyword) => {
+                return Some(keyword.clone())
+            },
+            _ => None
+        }
+    }
     pub fn is_token_parts(&self) -> bool {
         match self {
             TokenCategory::TokenParts(_) => true,
