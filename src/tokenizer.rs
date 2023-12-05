@@ -61,7 +61,7 @@ fn find_enclosed_tokens(tokens: &mut Vec<Token>) {
 
     for token in tokens.iter_mut() {
         // Found '['
-        if token.has_category(TokenCategory::Bracket(BracketType::Opening)) {
+        if token.category.is_opening_bracket() {
             opened = true;
         }
         // Look for TokenCategory::Unknown before BracketType::Closing

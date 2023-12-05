@@ -4,7 +4,7 @@ use crate::keyword::{Keyword, KeywordCategory, KeywordKind, KeywordPriority};
 use crate::keyword_manager::KeywordManager;
 use crate::metadata::MetadataKind;
 use crate::token::{Token, TokenCategory, TokenKind};
-use crate::token_helper::{extract_season_and_episode, is_digits, is_number_like, is_number_or_like, is_ordinal_number, is_video_resolution};
+use crate::token_helper::{extract_season_and_episode, is_digits, is_number_like, is_number_or_like, is_ordinal_number};
 use crate::tokenizer;
 use crate::utils::replace_case_insensitive;
 use uuid::Uuid;
@@ -40,26 +40,35 @@ impl TokenManager {
         }
     }
 
+    pub fn overwrite_token(&mut self, id: Uuid, new_token: Token) {
+        if let Some(token) = self.tokens.iter_mut().find(|t| t.uuid == id) {
+            *token = new_token
+        }
+    }
+
+    pub fn flatten_token_at(&mut self, index: usize, token_parts: Vec<Token>) {
+        // Check if the index is within bounds
+        if index > self.tokens.len() {
+            return ();
+        }
+
+        // Remove the existing token at the specified index
+        self.tokens.remove(index);
+
+        // Insert the new tokens at the specified index
+        for (i, token) in token_parts.into_iter().enumerate() {
+            self.tokens.insert(index + i, token);
+        }
+    }
+
     ///
     /// Identifies whether the token is a keyword by comparing it to all keywords.
     /// It will prefer "combination" keywords over "standalone" ones.
     ///
     pub fn identify_keyword(&mut self, token: &Token) -> Option<Vec<Token>> {
 
-        if token.is_known() {
+        if token.category.is_known() {
             return None;
-        }
-
-        // Check if the token is a video resolution
-        if is_video_resolution(token.value.as_str()) {
-            return Some(vec![
-                Token {
-                    category: TokenCategory::Keyword(
-                        Keyword::new(token.value.to_string(), KeywordCategory::VideoTerm, KeywordKind::Standalone, KeywordPriority::Normal)
-                    ),
-                    ..token.clone()
-                }
-            ]);
         }
 
         // Find possible keywords by value
@@ -93,20 +102,6 @@ impl TokenManager {
         }
         return found;
     }
-    // pub fn identify_keyword(&mut self, token: &Token) -> Option<Vec<Token>> {
-    //     // Find the keyword by value
-    //     let keyword_ret = self.keyword_manager.find(token.value.as_str());
-    //     // If the keyword exist, we check its category
-    //     if let Some(keyword) = keyword_ret {
-    //         return self.validate_keyword(token, &keyword);
-    //     }
-    //     return None;
-    // }
-
-    /// De-duplicating keyword matches
-    /// Flattening tokens whose TokenCategory is TokenCategory::TokenParts
-    pub fn normalize(&mut self, _token: &Token, _validated_tokens: Vec<Token>) {}
-
 
     ///
     /// If the returned vector has a single Token, the input token should be of TokenCategory::Keyword(keyword).
